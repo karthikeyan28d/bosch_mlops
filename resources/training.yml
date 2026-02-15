@@ -1,0 +1,118 @@
+# Databricks workflow for model training
+resources:
+  jobs:
+    biometric_training:
+      name: "biometric_training_${bundle.target}"
+      
+      description: "Training workflow for multimodal biometric recognition model"
+      
+      parameters:
+        - name: env
+          default: ${bundle.target}
+        - name: experiment_name
+          default: "biometric_${bundle.target}"
+      
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      
+      tasks:
+        # Task 0: Download data from Kaggle
+        - task_key: download_data
+          job_cluster_key: training_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: download
+            parameters:
+              - "--output"
+              - "/dbfs/mnt/data/biometric/raw"
+          libraries:
+            - whl: ../dist/*.whl
+          # Kaggle credentials from Databricks secrets
+          spark_env_vars:
+            KAGGLE_USERNAME: "{{secrets/kaggle/username}}"
+            KAGGLE_KEY: "{{secrets/kaggle/key}}"
+        
+        # Task 1: Data preprocessing
+        - task_key: preprocess_data
+          depends_on:
+            - task_key: download_data
+          job_cluster_key: training_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: preprocess
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+          libraries:
+            - whl: ../dist/*.whl
+        
+        # Task 2: Model training
+        - task_key: train_model
+          depends_on:
+            - task_key: preprocess_data
+          job_cluster_key: training_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: train
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+          libraries:
+            - whl: ../dist/*.whl
+        
+        # Task 3: Model evaluation (champion/challenger)
+        - task_key: evaluate_model
+          depends_on:
+            - task_key: train_model
+          job_cluster_key: training_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: evaluate
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+              - "--checkpoint"
+              - "/dbfs/mnt/data/biometric/checkpoints/best_model.pt"
+              - "--output"
+              - "/dbfs/mnt/data/biometric/metrics/evaluation.json"
+          libraries:
+            - whl: ../dist/*.whl
+        
+        # Task 4: Champion/Challenger comparison
+        - task_key: promote_model
+          depends_on:
+            - task_key: evaluate_model
+          job_cluster_key: training_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: retrain
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+              - "--threshold"
+              - "0.01"
+          libraries:
+            - whl: ../dist/*.whl
+        
+        # Task 5: Drift monitoring
+        - task_key: monitor_drift
+          depends_on:
+            - task_key: promote_model
+          job_cluster_key: training_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: monitor
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+              - "--action"
+              - "monitor"
+              - "--output"
+              - "/dbfs/mnt/data/biometric/monitoring"
+          libraries:
+            - whl: ../dist/*.whl
+      
+      job_clusters:
+        - job_cluster_key: training_cluster
+          new_cluster: ${var.job_cluster}

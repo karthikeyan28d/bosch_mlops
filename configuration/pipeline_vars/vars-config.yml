@@ -1,0 +1,23 @@
+# Pipeline Variables Configuration
+# Update these values according to your project
+
+variables:
+  # Project identification
+  project_name: "biometric-mlops"
+  project_version: "1.0.0"
+  full_bundle_name: "biometric_mlops_bundle"
+  
+  # Notifications
+  notification_email: "team@example.com"
+  
+  # Databricks configuration
+  databricks_host_dev: "https://adb-xxx.azuredatabricks.net"
+  databricks_host_prod: "https://adb-yyy.azuredatabricks.net"
+  
+  # Unity Catalog settings
+  catalog_name: "ml_models"
+  schema_name: "biometrics"
+  model_name: "multimodal_biometric"
+  
+  # Python version
+  python_version: "3.10"

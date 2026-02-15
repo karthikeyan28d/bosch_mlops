@@ -1,0 +1,85 @@
+# Databricks workflow for production inference
+resources:
+  jobs:
+    inference_pipeline:
+      name: "biometric_inference_${bundle.target}"
+      
+      description: "Inference pipeline - batch predictions on new data"
+      
+      parameters:
+        - name: env
+          default: ${bundle.target}
+        - name: input_path
+          default: "/mnt/data/biometric/input"
+        - name: output_path
+          default: "/mnt/data/biometric/predictions"
+      
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+        on_success:
+          - ${var.notification_email}
+      
+      # Schedule: Daily at 6 AM UTC (for production)
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "UTC"
+        pause_status: ${var.schedule_pause_status}
+      
+      tasks:
+        # Task 1: Load champion model and run inference
+        - task_key: batch_inference
+          job_cluster_key: inference_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: inference
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+              - "--alias"
+              - "champion"
+              - "--data-dir"
+              - "{{job.parameters.input_path}}"
+              - "--output"
+              - "{{job.parameters.output_path}}/predictions_{{job.start_time}}.parquet"
+          libraries:
+            - whl: ../dist/*.whl
+        
+        # Task 2: Validate predictions
+        - task_key: validate_predictions
+          depends_on:
+            - task_key: batch_inference
+          job_cluster_key: inference_cluster
+          notebook_task:
+            notebook_path: "/Workspace${workspace.root_path}/notebooks/validate_predictions"
+            base_parameters:
+              predictions_path: "{{job.parameters.output_path}}"
+          libraries:
+            - whl: ../dist/*.whl
+        
+        # Task 3: Monitor for drift
+        - task_key: drift_monitoring
+          depends_on:
+            - task_key: validate_predictions
+          job_cluster_key: inference_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: monitor
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+              - "--data-dir"
+              - "{{job.parameters.input_path}}"
+              - "--output"
+              - "/dbfs/mnt/data/biometric/monitoring"
+          libraries:
+            - whl: ../dist/*.whl
+      
+      job_clusters:
+        - job_cluster_key: inference_cluster
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 2
+            spark_env_vars:
+              PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:512"

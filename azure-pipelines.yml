@@ -1,0 +1,293 @@
+# Azure DevOps CI/CD Pipeline for Biometric MLOps
+# 
+# Workflow:
+# - PR from dev → main: Triggers CI Pipeline (unit tests + integration tests)
+# - Push to release: Triggers Release Pipeline (prod deployment)
+
+pr:
+  branches:
+    include:
+      - main
+
+trigger:
+  branches:
+    include:
+      - release
+
+variables:
+  - template: configuration/pipeline_vars/vars-config.yml
+
+parameters:
+  - name: service_principal_dev
+    type: string
+    default: "sc-$(project_name)-plab-sp"
+  - name: key_vault_name_dev
+    type: string
+    default: "$(project_name)-plab-euw-kv-01"
+  - name: service_principal_prod
+    type: string
+    default: "sc-$(project_name)-prod-sp"
+  - name: key_vault_name_prod
+    type: string
+    default: "$(project_name)-prod-euw-kv-01"
+
+jobs:
+  # ============================================================================
+  # CI Pipeline - Triggered on PR from dev → main
+  # Runs unit tests, integration tests, and validates Databricks bundle
+  # ============================================================================
+  - job: CI_Pipeline
+    displayName: 'CI Pipeline - Tests & Validation'
+    condition: and(
+        eq(variables['Build.Reason'], 'PullRequest'),
+        eq(variables['System.PullRequest.SourceBranch'], 'refs/heads/dev'),
+        eq(variables['System.PullRequest.TargetBranch'], 'refs/heads/main')
+      )
+    pool:
+      name: DevOpsFoundation-Project
+
+    steps:
+      # ----- Code Quality & Unit Tests -----
+      - task: AzureCLI@2
+        displayName: 'Setup Python Environment'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_dev }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            python -m venv env
+            env/Scripts/activate
+            python -m pip install --upgrade pip
+            pip install -e .[dev]
+            pip install -r requirements.txt
+
+      - task: AzureCLI@2
+        displayName: 'Code Quality - Linting'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_dev }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            env/Scripts/activate
+            pip install flake8 black isort pylint pylint_junit
+            echo "Running Black (formatting check)..."
+            black --check src/ tests/
+            echo "Running isort (import ordering)..."
+            isort --check-only src/ tests/
+            echo "Running Flake8 (linting)..."
+            flake8 src/ tests/ --max-line-length=100 --ignore=E501,W503
+            echo "Running Pylint..."
+            pylint src/ --output-format=pylint_junit.JUnitReporter --exit-zero > pylint-testresults.xml
+
+      - task: AzureCLI@2
+        displayName: 'Unit Tests'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_dev }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            env/Scripts/activate
+            pip install pytest pytest-cov pytest-azurepipelines
+            echo "Running Unit Tests..."
+            pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=html --junitxml=unit-testresults.xml
+
+      - task: PublishTestResults@2
+        displayName: 'Publish Unit Test Results'
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/unit-testresults.xml'
+          failTaskOnFailedTests: true
+
+      - task: AzureCLI@2
+        displayName: 'Integration Tests'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_dev }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            env/Scripts/activate
+            echo "Running Integration Tests..."
+            pytest tests/integration/ -v --tb=short --junitxml=integration-testresults.xml
+
+      - task: PublishTestResults@2
+        displayName: 'Publish Integration Test Results'
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/integration-testresults.xml'
+          failTaskOnFailedTests: true
+
+      - task: PublishCodeCoverageResults@2
+        displayName: 'Publish Code Coverage'
+        inputs:
+          codeCoverageTool: Cobertura
+          summaryFileLocation: 'coverage.xml'
+          reportDirectory: 'htmlcov'
+        env:
+          DISABLE_COVERAGE_AUTOGENERATE: 'true'
+
+      # ----- Databricks Bundle Validation & Test Deployment -----
+      - task: AzureKeyVault@2
+        displayName: 'Get Azure Key Vault Secrets (Dev)'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_dev }}
+          KeyVaultName: ${{ parameters.key_vault_name_dev }}
+
+      - task: AzureCLI@2
+        displayName: 'Configure Databricks Authentication'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_dev }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            $secrets = @{
+              "sp-app-appid"     = "$(sp-app-appid)"
+              "sp-app-secret"    = "$(sp-app-secret)"
+              "sp-app-tenant-id" = "$(sp-app-tenant-id)"
+            }
+
+      - script: |
+          az login --service-principal -u $(sp-app-appid) -p $(sp-app-secret) --tenant $(sp-app-tenant-id)
+        displayName: 'Service Principal Authentication'
+
+      - script: |
+          databricks -v
+        displayName: 'Check Databricks CLI Version'
+
+      - script: |
+          echo Project Name: %BUNDLE_VAR_project_name%
+          echo Project Version: %BUNDLE_VAR_project_version%
+          echo Notification Email: %BUNDLE_VAR_notification_email%
+          databricks bundle validate -t tests
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Validate (Test)'
+
+      - script: |
+          databricks bundle deploy -t tests
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Deploy (Test)'
+
+      - script: |
+          databricks bundle run -t tests test_job
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Run (Test Job)'
+
+  # ============================================================================
+  # Release Pipeline - Triggered on push to release branch
+  # Deploys to production environment
+  # ============================================================================
+  - job: Release_Pipeline
+    displayName: 'Release Pipeline - Production Deployment'
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/release')
+    pool:
+      name: DevOpsFoundation-Project
+
+    steps:
+      # ----- Code Quality (Verification) -----
+      - task: AzureCLI@2
+        displayName: 'Setup Python Environment'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_prod }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            python -m venv env
+            env/Scripts/activate
+            python -m pip install --upgrade pip
+            pip install -e .[dev]
+            pip install -r requirements.txt
+
+      - task: AzureCLI@2
+        displayName: 'Code Quality Verification'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_prod }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            env/Scripts/activate
+            pip install flake8 pylint pylint_junit
+            pylint src/ --output-format=pylint_junit.JUnitReporter --exit-zero > pylint-testresults.xml
+
+      # ----- Databricks Production Deployment -----
+      - task: AzureKeyVault@2
+        displayName: 'Get Azure Key Vault Secrets (Prod)'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_prod }}
+          KeyVaultName: ${{ parameters.key_vault_name_prod }}
+
+      - task: AzureCLI@2
+        displayName: 'Configure Databricks Authentication'
+        inputs:
+          azureSubscription: ${{ parameters.service_principal_prod }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            $secrets = @{
+              "sp-app-appid"     = "$(sp-app-appid)"
+              "sp-app-secret"    = "$(sp-app-secret)"
+              "sp-app-tenant-id" = "$(sp-app-tenant-id)"
+            }
+
+      - script: |
+          az login --service-principal -u $(sp-app-appid) -p $(sp-app-secret) --tenant $(sp-app-tenant-id)
+        displayName: 'Service Principal Authentication (Prod)'
+
+      - script: |
+          databricks -v
+        displayName: 'Check Databricks CLI Version'
+
+      - script: |
+          echo Project Name: %BUNDLE_VAR_project_name%
+          echo Project Version: %BUNDLE_VAR_project_version%
+          echo Notification Email: %BUNDLE_VAR_notification_email%
+          databricks bundle validate -t prod
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Validate (Prod)'
+
+      # Uncomment to destroy existing bundle before deploy
+      # - script: |
+      #     databricks bundle destroy -t prod --auto-approve --force-lock
+      #   workingDirectory: $(Build.SourcesDirectory)
+      #   displayName: 'Databricks Bundle Destroy (Prod)'
+
+      - script: |
+          databricks bundle deploy -t prod
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Deploy (Prod)'
+
+      - script: |
+          databricks bundle run -t prod biometric_training
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Run (Training Pipeline)'
+
+      - script: |
+          databricks bundle run -t prod inference_pipeline
+        workingDirectory: $(Build.SourcesDirectory)
+        env:
+          BUNDLE_VAR_project_name: $(project_name)
+          BUNDLE_VAR_project_version: $(project_version)
+          BUNDLE_VAR_notification_email: $(notification_email)
+        displayName: 'Databricks Bundle Run (Inference Pipeline)'

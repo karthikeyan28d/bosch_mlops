@@ -1,0 +1,89 @@
+# Databricks Asset Bundle configuration for Biometric MLOps
+bundle:
+  name: "biometric_mlops"
+
+include:
+  - resources/*.yml
+
+artifacts:
+  default:
+    type: whl
+    path: .
+
+variables:
+  # Project variables
+  project_name:
+    description: "Project name"
+    default: "biometric_mlops"
+  
+  project_version:
+    description: "Project version"
+    default: "1.0.0"
+  
+  # Notification settings
+  notification_email:
+    description: "Email for job notifications"
+    default: "mlops-team@example.com"
+  
+  # Schedule settings
+  schedule_pause_status:
+    description: "Schedule pause status"
+    default: PAUSED
+  
+  # Cluster configuration
+  job_cluster:
+    description: "Job cluster configuration"
+    type: complex
+    default:
+      spark_version: "14.3.x-scala2.12"
+      node_type_id: "Standard_DS3_v2"
+      num_workers: 1
+      spark_env_vars:
+        PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:512"
+
+# Deployment targets
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: ${DATABRICKS_HOST}
+      root_path: /Users/${workspace.current_user.userName}/bundles/${bundle.name}/${bundle.target}
+    
+    run_as:
+      user_name: ${workspace.current_user.userName}
+    
+    variables:
+      catalog_name: biometric_dev
+      schema_name: mlops
+
+  tests:
+    # CI/CD test environment - triggered on PR from dev → main
+    mode: development
+    workspace:
+      host: ${DATABRICKS_HOST}
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    
+    variables:
+      catalog_name: biometric_test
+      schema_name: mlops
+
+  staging:
+    workspace:
+      host: ${DATABRICKS_HOST}
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    
+    variables:
+      catalog_name: biometric_staging
+      schema_name: mlops
+
+  prod:
+    # Production environment - triggered on push to release branch
+    workspace:
+      host: ${DATABRICKS_HOST}
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    
+    variables:
+      catalog_name: biometric_prod
+      schema_name: mlops
+      schedule_pause_status: UNPAUSED

@@ -1,0 +1,77 @@
+# Databricks workflow for CI/CD test job
+# Runs during PR from dev → main
+resources:
+  jobs:
+    test_job:
+      name: "biometric_tests_${bundle.target}"
+      
+      description: "CI/CD test job - runs unit and integration tests"
+      
+      parameters:
+        - name: env
+          default: ${bundle.target}
+      
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      
+      tasks:
+        # Task 1: Unit Tests
+        - task_key: unit_tests
+          job_cluster_key: test_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: test
+            parameters:
+              - "unit"
+              - "--verbose"
+          libraries:
+            - whl: ../dist/*.whl
+            - pypi:
+                package: pytest
+            - pypi:
+                package: pytest-cov
+        
+        # Task 2: Integration Tests
+        - task_key: integration_tests
+          depends_on:
+            - task_key: unit_tests
+          job_cluster_key: test_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: test
+            parameters:
+              - "integration"
+              - "--verbose"
+          libraries:
+            - whl: ../dist/*.whl
+            - pypi:
+                package: pytest
+        
+        # Task 3: Model Smoke Test
+        - task_key: model_smoke_test
+          depends_on:
+            - task_key: integration_tests
+          job_cluster_key: test_cluster
+          python_wheel_task:
+            package_name: biometric_mlops
+            entry_point: train
+            parameters:
+              - "--config"
+              - "/Workspace${workspace.root_path}/configs/config.yaml"
+              - "--epochs"
+              - "1"  # Quick smoke test with 1 epoch
+          libraries:
+            - whl: ../dist/*.whl
+      
+      job_clusters:
+        - job_cluster_key: test_cluster
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 0  # Single node for tests
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*]"
+            custom_tags:
+              ResourceClass: SingleNode

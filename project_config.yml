@@ -1,0 +1,48 @@
+#########################################################################
+############## Project Configuration for Different Environments #########
+#########################################################################
+
+# Databricks Unity Catalog configurations per environment
+dev:
+  catalog_name: biometric_dev
+  schema_name: mlops
+  src_catalog_name: biometric_dev
+
+prod:
+  catalog_name: biometric_prod
+  schema_name: mlops
+  src_catalog_name: biometric_dev
+
+#########################################################################
+############# Tables Variables ############
+#########################################################################
+
+# Table prefixes and names
+usecase_name: biometric
+raw_data: raw_images
+feature_table: features
+processed_table: processed_data
+predictions_table: predictions
+
+# Identity column
+id_col: "subject_id"
+
+#########################################################################
+############# Model Variables ############
+#########################################################################
+
+model_name: multimodal_biometric_model
+model_version: "1.0.0"
+
+#########################################################################
+############# Processing Variables ############
+#########################################################################
+
+# Image processing
+image_size: 128
+batch_size: 32
+
+# Modalities
+modalities:
+  - iris
+  - fingerprint

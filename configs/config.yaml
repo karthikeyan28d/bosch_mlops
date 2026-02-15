@@ -1,0 +1,220 @@
+# Main Configuration File for Biometric MLOps Pipeline
+# This config follows Hydra-style conventions for config-driven ML
+
+# =============================================================================
+# Project Settings
+# =============================================================================
+project:
+  name: "biometric_mlops"
+  version: "1.0.0"
+  description: "Multimodal Biometric Recognition System"
+  
+# =============================================================================
+# Runtime Environment
+# =============================================================================
+runtime:
+  # Options: "local", "databricks"
+  environment: "local"
+  # Random seed for reproducibility
+  seed: 42
+  # Device: "auto", "cuda", "cpu"
+  device: "auto"
+  # Number of workers for data loading
+  num_workers: 4
+  # Enable debug mode (verbose logging)
+  debug: false
+
+# =============================================================================
+# Kaggle Data Source
+# =============================================================================
+kaggle:
+  # Dataset identifier on Kaggle
+  dataset: "ninadmehendale/multimodal-iris-fingerprint-biometric-data"
+  # Auto-download if data is missing
+  auto_download: true
+  # Force re-download even if data exists
+  force: false
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  # Root directory for raw data
+  raw_dir: "data/raw"
+  # Processed data directory
+  processed_dir: "data/processed"
+  # Output directory
+  output_dir: "outputs"
+  
+  # Image settings
+  image:
+    # Target size for preprocessing (height, width)
+    size: [128, 128]
+    # Normalization mean (grayscale)
+    mean: [0.5]
+    # Normalization std
+    std: [0.5]
+  
+  # Dataset split ratios
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  
+  # Modality weights for fusion
+  modalities:
+    iris:
+      enabled: true
+      weight: 0.5
+    fingerprint:
+      enabled: true
+      weight: 0.5
+
+# =============================================================================
+# Preprocessing Configuration
+# =============================================================================
+preprocessing:
+  # Parallel processing backend: "ray", "multiprocessing", "sequential"
+  backend: "ray"
+  # Number of parallel workers (null = auto-detect)
+  num_workers: null
+  # Batch size for parallel processing
+  batch_size: 100
+  # Cache processed data to disk
+  cache_enabled: true
+  # Cache format: "parquet", "arrow"
+  cache_format: "parquet"
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  # Model architecture
+  architecture: "multimodal_cnn"
+  # Number of identity classes (set dynamically from data)
+  num_classes: null
+  # Feature embedding dimension
+  embedding_dim: 128
+  # Dropout rate
+  dropout: 0.3
+  
+  # Branch-specific settings
+  iris_branch:
+    # Convolutional layers: [out_channels, kernel_size, stride]
+    conv_layers:
+      - [32, 3, 1]
+      - [64, 3, 1]
+      - [128, 3, 1]
+  
+  fingerprint_branch:
+    conv_layers:
+      - [32, 3, 1]
+      - [64, 3, 1]
+      - [128, 3, 1]
+  
+  # Fusion method: "concat", "attention", "weighted_sum"
+  fusion_method: "concat"
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  # Number of epochs
+  epochs: 50
+  # Batch size
+  batch_size: 32
+  # Learning rate
+  learning_rate: 0.001
+  # Weight decay (L2 regularization)
+  weight_decay: 0.0001
+  # Optimizer: "adam", "sgd", "adamw"
+  optimizer: "adamw"
+  # Learning rate scheduler: "cosine", "step", "none"
+  scheduler: "cosine"
+  # Scheduler params
+  scheduler_params:
+    T_max: 50
+    eta_min: 0.00001
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.001
+    monitor: "val_loss"
+  
+  # Checkpointing
+  checkpoint:
+    enabled: true
+    save_dir: "outputs/checkpoints"
+    save_best_only: true
+    save_freq: 5
+  
+  # Gradient clipping
+  gradient_clip: 1.0
+  # Mixed precision training
+  mixed_precision: false
+
+# =============================================================================
+# Inference Configuration
+# =============================================================================
+inference:
+  # Batch size for inference
+  batch_size: 64
+  # Model checkpoint path (or "latest" for most recent)
+  checkpoint: "latest"
+  # Output format: "csv", "parquet", "delta"
+  output_format: "parquet"
+  # Output path
+  output_path: "outputs/predictions"
+
+# =============================================================================
+# MLflow Configuration
+# =============================================================================
+mlflow:
+  # Enable MLflow tracking
+  enabled: true
+  # Tracking URI (null = local, or Databricks workspace)
+  tracking_uri: null
+  # Experiment name
+  experiment_name: "biometric_recognition"
+  # Run name prefix
+  run_name_prefix: "train"
+  # Log artifacts
+  log_artifacts: true
+  # Register model
+  register_model: true
+  # Model registry name (deprecated - use model_registry section)
+  registry_name: "biometric_model"
+
+# =============================================================================
+# Model Registry Configuration (Unity Catalog)
+# =============================================================================
+model_registry:
+  # Enable Unity Catalog model registry
+  enabled: true
+  # Unity Catalog name (Databricks)
+  catalog: "ml_models"
+  # Schema/database name
+  schema: "biometrics"
+  # Model name
+  model_name: "multimodal_biometric"
+  # Auto-register after training
+  auto_register: true
+  # Default alias for new models
+  default_alias: "challenger"
+  # Promotion threshold (minimum improvement to promote)
+  promotion_threshold: 0.01
+  # Primary metric for comparison
+  primary_metric: "f1_macro"
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  # Log file path (null = console only)
+  file_path: "outputs/logs/train.log"

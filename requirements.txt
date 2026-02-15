@@ -1,0 +1,42 @@
+# Core ML dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+Pillow>=9.0.0
+
+# Data processing
+pyarrow>=12.0.0
+pandas>=2.0.0
+
+# Data loading
+kaggle>=1.5.0
+
+# Model evaluation
+scikit-learn>=1.3.0
+
+# Drift monitoring (optional)
+evidently>=0.4.0
+scipy>=1.11.0
+
+# Configuration
+PyYAML>=6.0
+
+# Experiment tracking (optional)
+mlflow>=2.10.0
+
+# Parallel processing (optional)
+# ray>=2.0.0  # Uncomment to enable Ray
+
+# Code quality
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Build tools
+setuptools>=65.0.0
+wheel>=0.40.0
+build>=1.0.0
