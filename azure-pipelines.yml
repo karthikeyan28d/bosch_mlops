@@ -8,11 +8,8 @@ pr:
   branches:
     include:
       - main
-
-trigger:
-  branches:
-    include:
       - release
+
 
 variables:
   - template: configuration/pipeline_vars/vars-config.yml
