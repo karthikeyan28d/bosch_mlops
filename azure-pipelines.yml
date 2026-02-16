@@ -8,10 +8,6 @@ pr:
   branches:
     include:
       - main
-
-trigger:
-  branches:
-    include:
       - release
 
 variables:
